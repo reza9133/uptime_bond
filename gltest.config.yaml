@@ -1,0 +1,14 @@
+# Studio-mode config used by `gltest --network studionet tests_e2e`.
+# Direct-mode tests (`pytest tests`) do not read this file.
+networks:
+  default: studionet
+
+  localnet:
+    url: "http://127.0.0.1:4000/api"
+    leader_only: false
+
+  studionet: {}   # pre-configured by genlayer-test; test accounts are generated automatically
+
+paths:
+  contracts: "contracts"
+  artifacts: "artifacts"
