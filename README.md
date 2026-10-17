@@ -130,8 +130,10 @@ rejected.
 * **URL hygiene.** Evidence URLs must be `https`, ASCII, without credentials,
   ports, IP literals or private-looking hosts, and end in a real-looking TLD.
   Evidence pages larger than 2 MB are rejected.
-* **No `__receive__`.** A bare transfer is rejected, so the contract's balance
-  always equals its internal accounting (`get_stats().contract_balance_expected`).
+* **No `__receive__`.** A bare transfer is rejected, so every unit the contract
+  holds arrives through a payable method and is booked in
+  `get_stats().contract_balance_expected`. One exception is network-level, not
+  contract-level: see "Value sent with a rejected call" under Honest limitations.
 
 ## Contract API
 
@@ -250,6 +252,8 @@ least an hour and an audit opens an hour after it ends, settlement is time-gated
 | `resume` | later (about 3 hours on), audit, claim and verify the saved run |
 | `wait` | keep the run alive until the audit opens, then continue |
 
+The first time-gated run stops after the setup tests (the audit tests are skipped, not failed). Once the printed audit time has passed, finish the same run with `E2E_SETTLE=resume bash scripts/run_all.sh e2e`.
+
 `E2E_CONTRACT_ADDRESS=<address>` attaches to an already deployed (fresh) contract instead of deploying one; the author's Studionet instance is `0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6`.
 
 `E2E_TIME=warp` jumps the clock with `sim_increaseTime` (GLSim / local simulator only) and
@@ -342,6 +346,17 @@ live status page yet.
 * **The feed-coverage check assumes pages of 50 incidents**, as Statuspage
   serves. A feed with a different page size could under-report old epochs; it is
   safest to audit promptly.
+* **Value sent with a rejected call can stay in the contract.** The live
+  Studionet end-to-end run showed that when a payable call is rejected (for
+  example `subscribe` with the wrong amount, or `create_plan` with an unsafe URL),
+  the contract's state is untouched but the value attached to that transaction is
+  not refunded: the on-chain balance exceeded the books by exactly the value the
+  rejected calls carried (209,999 in that run). Nothing in `get_stats()` counts
+  it, no plan can use it, and this version has no function to recover it, so a
+  user who mis-sends a payable call loses that amount. Check the amount before
+  you send. The e2e test accepts exactly this surplus and fails on any other
+  difference; a future version could add an admin sweep limited to
+  `balance - contract_balance_expected`.
 * **An unfetchable source is a refund, not a pass.** If a status page stays
   unusable for the whole 14-day audit window, subscribers are refunded in full.
   This is deliberate (no evidence, no revenue), but a third-party outage can

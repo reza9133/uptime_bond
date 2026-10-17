@@ -21,6 +21,10 @@ Three environment variables choose how to deal with that:
                   mock   validators are given a scripted incident feed (deterministic numbers;
                          needs a Studio-based network that supports mock validators)
 
+Balance checks: Studionet keeps the value attached to a rejected transaction, so the on-chain balance may
+exceed the books by exactly the value test_04 sends with its rejected calls (see KEPT_BY_REJECTED_CALLS).
+Any other difference fails the test.
+
 Written against the documented genlayer-test 0.29 Studio-mode API. It has NOT been executed
 against a live network by its author, so the helpers below are defensive and report anything
 unexpected instead of hiding it.
@@ -59,6 +63,13 @@ PROTOCOL_FEE_BPS, MIN_BOND = 100, 1_000
 FEE, BOND, EPOCH_SECONDS, TARGET_BPS = 10_000, 100_000, 3_600, 9_990
 HOUR = 3_600
 CTX = {}   # shared between the ordered tests: contract, plan_id, subscription ids, transaction context
+
+# test_04 sends these values together with calls the contract must reject (two bad create_plan calls
+# and an under-paid subscribe). Studionet was observed to KEEP the value of a rejected transaction in
+# the contract (state is untouched, the funds are not refunded), so the on-chain balance can legitimately
+# exceed the contract's books by exactly this amount. Networks that refund will show no difference.
+REJECTED_CALL_VALUES = (BOND, BOND, FEE - 1)
+KEPT_BY_REJECTED_CALLS = sum(REJECTED_CALL_VALUES)
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +161,24 @@ def _balance(gl_client, address):
         except Exception:  # noqa: BLE001
             continue
     return None
+
+
+def _assert_balance(label, actual, books):
+    """The on-chain balance must equal the books, or the books plus exactly what rejected calls carried."""
+    if actual == books:
+        step(label, "ok", f"on-chain {actual} == books {books} (value of rejected calls was refunded)")
+        return
+    if actual == books + KEPT_BY_REJECTED_CALLS:
+        step(label, "warn",
+             f"on-chain {actual} = books {books} + {KEPT_BY_REJECTED_CALLS}. That surplus is exactly the value "
+             f"attached to the three calls test_04 expects to be rejected: this network keeps the value of a "
+             f"rejected transaction (the contract's state is unchanged and the books are exact)")
+        return
+    step(label, "fail",
+         f"on-chain {actual}, books {books}; rejected calls carried {KEPT_BY_REJECTED_CALLS} "
+         f"(difference {actual - books})")
+    pytest.fail(f"{label}: on-chain balance {actual} matches neither the books ({books}) "
+                f"nor books + value of rejected calls ({books + KEPT_BY_REJECTED_CALLS})")
 
 
 def _save_state(extra=None):
@@ -286,9 +315,7 @@ def test_06_on_chain_balance_matches_the_books(gl_client):
         step("contract balance vs internal accounting", "warn",
              f"balance query not available in this client; internal books say {expected}")
         pytest.skip("balance query not supported by this genlayer-test release")
-    step("contract balance vs internal accounting", "ok" if actual == expected else "fail",
-         f"on-chain {actual}, books {expected}")
-    assert actual == expected
+    _assert_balance("contract balance vs internal accounting", actual, expected)
 
 
 def test_07_audit_cannot_run_early(accounts):
@@ -376,5 +403,4 @@ def test_10_final_books_balance(gl_client):
     assert int(stats["contract_balance_expected"]) == expected
     actual = _balance(gl_client, CTX["address"])
     if actual is not None:
-        step("final on-chain balance", "ok" if actual == expected else "fail", f"on-chain {actual}, books {expected}")
-        assert actual == expected
+        _assert_balance("final on-chain balance", actual, expected)
