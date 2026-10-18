@@ -254,6 +254,8 @@ least an hour and an audit opens an hour after it ends, settlement is time-gated
 
 The first time-gated run stops after the setup tests (the audit tests are skipped, not failed). Once the printed audit time has passed, finish the same run with `E2E_SETTLE=resume bash scripts/run_all.sh e2e`.
 
+`E2E_FINALITY_WAIT_S=<seconds>` (default 900) is how long the last test polls for payouts to finalize. If they have not landed it is *skipped*, never passed; run `E2E_SETTLE=resume` again later. Resuming is safe to repeat: tests 08 and 09 reuse an audit and claims that already happened.
+
 `E2E_CONTRACT_ADDRESS=<address>` attaches to an already deployed (fresh) contract instead of deploying one; the author's Studionet instance is `0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6`.
 
 `E2E_TIME=warp` jumps the clock with `sim_increaseTime` (GLSim / local simulator only) and
@@ -346,6 +348,15 @@ live status page yet.
 * **The feed-coverage check assumes pages of 50 incidents**, as Statuspage
   serves. A feed with a different page size could under-report old epochs; it is
   safest to audit promptly.
+* **Payouts arrive at finalization, not at acceptance.** Every transfer the
+  contract emits (provider revenue, protocol fee, compensation claims, bond
+  withdrawals) uses the SDK's default `on='finalized'`, which is the safe choice
+  for money because an accepted transaction can still be overturned on appeal.
+  Right after an audit or a claim the recipients have therefore not been paid yet
+  and the contract still holds the funds; `get_stats()` already shows the new
+  books. The live e2e run confirmed it: after a settled audit the on-chain
+  balance equalled the books plus exactly the not-yet-executed payouts. Wait for
+  the transaction to reach FINALIZED before expecting the money to move.
 * **Value sent with a rejected call can stay in the contract.** The live
   Studionet end-to-end run showed that when a payable call is rejected (for
   example `subscribe` with the wrong amount, or `create_plan` with an unsafe URL),

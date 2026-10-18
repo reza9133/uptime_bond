@@ -21,6 +21,11 @@ Three environment variables choose how to deal with that:
                   mock   validators are given a scripted incident feed (deterministic numbers;
                          needs a Studio-based network that supports mock validators)
 
+Payouts are emitted when the transaction that causes them is FINALIZED, not merely ACCEPTED, so right after
+an audit or a claim the on-chain balance still includes them. test_10 therefore polls (E2E_FINALITY_WAIT_S,
+default 900) and SKIPS if they have not landed; re-run with E2E_SETTLE=resume later (tests 08 and 09 reuse
+the earlier result instead of repeating it).
+
 Balance checks: Studionet keeps the value attached to a rejected transaction, so the on-chain balance may
 exceed the books by exactly the value test_04 sends with its rejected calls (see KEPT_BY_REJECTED_CALLS).
 Any other difference fails the test.
@@ -57,6 +62,7 @@ PLAN_URL = os.getenv(
 )
 WAIT_INTERVAL = int(os.getenv("E2E_WAIT_INTERVAL_MS", "3000"))
 WAIT_RETRIES = int(os.getenv("E2E_WAIT_RETRIES", "100"))
+FINALITY_WAIT = int(os.getenv("E2E_FINALITY_WAIT_S", "900"))   # how long test_10 waits for payouts to land
 STATE_FILE = pathlib.Path(os.getenv("LIVE_REPORT_DIR", "reports/studionet")) / "e2e_state.json"
 
 PROTOCOL_FEE_BPS, MIN_BOND = 100, 1_000
@@ -163,22 +169,72 @@ def _balance(gl_client, address):
     return None
 
 
-def _assert_balance(label, actual, books):
-    """The on-chain balance must equal the books, or the books plus exactly what rejected calls carried."""
-    if actual == books:
-        step(label, "ok", f"on-chain {actual} == books {books} (value of rejected calls was refunded)")
-        return
-    if actual == books + KEPT_BY_REJECTED_CALLS:
-        step(label, "warn",
-             f"on-chain {actual} = books {books} + {KEPT_BY_REJECTED_CALLS}. That surplus is exactly the value "
-             f"attached to the three calls test_04 expects to be rejected: this network keeps the value of a "
-             f"rejected transaction (the contract's state is unchanged and the books are exact)")
-        return
-    step(label, "fail",
-         f"on-chain {actual}, books {books}; rejected calls carried {KEPT_BY_REJECTED_CALLS} "
-         f"(difference {actual - books})")
-    pytest.fail(f"{label}: on-chain balance {actual} matches neither the books ({books}) "
-                f"nor books + value of rejected calls ({books + KEPT_BY_REJECTED_CALLS})")
+def _balance_state(actual, books, audit_out, claims_out):
+    """Classify the on-chain balance against the contract's books.
+
+    Payouts are emitted with on='finalized' (the SDK default, and the safe choice for money: an accepted
+    transaction can still be overturned on appeal). They therefore leave the contract only once the
+    transaction that caused them is FINALIZED, which happens later than the ACCEPTED status these tests
+    wait for. Until then the chain still holds them, so the balance is the books plus that pending payout.
+    The books are already reduced at settlement time, which is what makes the arithmetic exact.
+
+    Returns ("settled" | "pending", kept_by_rejected_calls), or (None, None) for any other number.
+    """
+    pending_amounts = {audit_out, claims_out, audit_out + claims_out} - {0}
+    for kept in (0, KEPT_BY_REJECTED_CALLS):
+        diff = actual - books - kept
+        if diff == 0:
+            return "settled", kept
+        if diff in pending_amounts:
+            return "pending", kept
+    return None, None
+
+
+def _books_and_outflows():
+    stats = _stats()
+    books = (int(stats["total_bond_held"]) + int(stats["total_escrowed_fees"])
+             + int(stats["total_compensation_pending"]))
+    audit_out = int(stats["total_provider_revenue"]) + int(stats["total_protocol_revenue"])
+    return books, audit_out, int(stats["total_compensation_paid"])
+
+
+def _assert_balance(label, read_balance, wait_for_settled=False):
+    """On-chain balance == books (+ value kept from rejected calls) once every payout has landed.
+
+    With wait_for_settled the check polls up to E2E_FINALITY_WAIT_S seconds for finalization and then
+    SKIPS (never passes) if payouts are still pending. Any number that fits none of the explained
+    cases fails immediately.
+    """
+    deadline = time.time() + (FINALITY_WAIT if wait_for_settled else 0)
+    announced = False
+    while True:
+        actual = read_balance()
+        if actual is None:
+            pytest.skip("balance query not supported by this genlayer-test release")
+        books, audit_out, claims_out = _books_and_outflows()
+        state, kept = _balance_state(actual, books, audit_out, claims_out)
+        if state is None:
+            step(label, "fail",
+                 f"on-chain {actual}, books {books}; value kept from rejected calls would be "
+                 f"{KEPT_BY_REJECTED_CALLS}; payouts that may still be pending: audit {audit_out}, claims {claims_out}")
+            pytest.fail(f"{label}: on-chain balance {actual} fits neither the books ({books}) nor any explained "
+                        f"combination of kept rejected-call value and not-yet-finalized payouts")
+        if state == "settled":
+            note = ("" if kept == 0 else f" (+{kept} kept from rejected calls: this network does not refund them)")
+            step(label, "ok" if kept == 0 else "warn", f"on-chain {actual} == books {books}{note}")
+            return
+        pending = actual - books - kept
+        if not wait_for_settled:
+            step(label, "warn", f"{pending} of emitted payouts are not on-chain yet (waiting for finalization); "
+                                f"on-chain {actual}, books {books}")
+            return
+        if not announced:
+            step(label, "info", f"{pending} of payouts are waiting for finalization; polling up to {FINALITY_WAIT}s")
+            announced = True
+        if time.time() >= deadline:
+            step(label, "warn", f"payouts of {pending} still not finalized after {FINALITY_WAIT}s")
+            pytest.skip(f"payouts of {pending} are not finalized yet; run again later with E2E_SETTLE=resume")
+        time.sleep(15)
 
 
 def _save_state(extra=None):
@@ -309,13 +365,7 @@ def test_05_two_customers_subscribe(accounts):
 
 def test_06_on_chain_balance_matches_the_books(gl_client):
     _need("address")
-    actual = _balance(gl_client, CTX["address"])
-    expected = int(_stats()["contract_balance_expected"])
-    if actual is None:
-        step("contract balance vs internal accounting", "warn",
-             f"balance query not available in this client; internal books say {expected}")
-        pytest.skip("balance query not supported by this genlayer-test release")
-    _assert_balance("contract balance vs internal accounting", actual, expected)
+    _assert_balance("contract balance vs internal accounting", lambda: _balance(gl_client, CTX["address"]))
 
 
 def test_07_audit_cannot_run_early(accounts):
@@ -350,13 +400,17 @@ def _wait_for_audit_window():
 
 def test_08_audit_settles_the_epoch(accounts):
     _need("plan_id", "epoch", "audit_opens_at")
-    _wait_for_audit_window()
     pid, epoch = CTX["plan_id"], CTX["epoch"]
-    if EVIDENCE == "mock":
-        CTX["tx_context"] = _mock_context(int(dict(_view("get_epoch", pid, epoch))["starts_at"]))
-    _succeeds("audit_epoch (validators read the evidence)", "audit_epoch", [pid, epoch], accounts[2])
     rec = dict(_view("get_epoch", pid, epoch))
-    step("epoch settled", "info", json.dumps(rec))
+    if rec["status"] == "AUDITED":   # a previous run already settled it: verify, do not audit again
+        step("epoch was already audited by an earlier run", "info", json.dumps(rec))
+    else:
+        _wait_for_audit_window()
+        if EVIDENCE == "mock":
+            CTX["tx_context"] = _mock_context(int(dict(_view("get_epoch", pid, epoch))["starts_at"]))
+        _succeeds("audit_epoch (validators read the evidence)", "audit_epoch", [pid, epoch], accounts[2])
+        rec = dict(_view("get_epoch", pid, epoch))
+        step("epoch settled", "info", json.dumps(rec))
     assert rec["status"] == "AUDITED"
 
     # Internal consistency that must hold whatever the evidence said.
@@ -379,6 +433,12 @@ def test_09_claims_pay_out_exactly_once(accounts):
     rec = CTX["settled"]
     per_sub = int(rec["comp_per_subscriber"])
     alice = CTX["alice_sub"]
+    now_rec = dict(_view("get_epoch", CTX["plan_id"], CTX["epoch"]))
+    if per_sub > 0 and int(now_rec["comp_claimed"]) == int(now_rec["comp_pool"]):
+        step("compensation was already claimed by an earlier run", "ok",
+             f"claimed {now_rec['comp_claimed']} of {now_rec['comp_pool']}")
+        assert dict(_view("get_claimable", alice))["total"] == "0"
+        return
     claimable = dict(_view("get_claimable", alice))
     step("alice's claimable amount", "info", json.dumps(claimable))
     if per_sub == 0:
@@ -401,6 +461,4 @@ def test_10_final_books_balance(gl_client):
     expected = (int(stats["total_bond_held"]) + int(stats["total_escrowed_fees"])
                 + int(stats["total_compensation_pending"]))
     assert int(stats["contract_balance_expected"]) == expected
-    actual = _balance(gl_client, CTX["address"])
-    if actual is not None:
-        _assert_balance("final on-chain balance", actual, expected)
+    _assert_balance("final on-chain balance", lambda: _balance(gl_client, CTX["address"]), wait_for_settled=True)
