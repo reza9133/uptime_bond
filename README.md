@@ -8,7 +8,7 @@
 > A live end-to-end test for Studionet is in [`tests_e2e/`](#one-command-runs-and-the-live-report).
 > Run everything, with a live report, using `bash scripts/run_all.sh`.
 >
-> Studionet contract address: `0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6`
+> Studionet contract address: `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7`
 
 A provider publishes a plan: *"this service is up at least 99.9% of every
 epoch"*, priced per epoch, with a public status page as the source of truth,
@@ -256,7 +256,7 @@ The first time-gated run stops after the setup tests (the audit tests are skippe
 
 `E2E_FINALITY_WAIT_S=<seconds>` (default 900) is how long the last test polls for payouts to finalize. If they have not landed it is *skipped*, never passed; run `E2E_SETTLE=resume` again later. Resuming is safe to repeat: tests 08 and 09 reuse an audit and claims that already happened.
 
-`E2E_CONTRACT_ADDRESS=<address>` attaches to an already deployed (fresh) contract instead of deploying one; the author's Studionet instance is `0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6`.
+`E2E_CONTRACT_ADDRESS=<address>` attaches to an already deployed (fresh) contract instead of deploying one; the author's Studionet instance is `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7`.
 
 `E2E_TIME=warp` jumps the clock with `sim_increaseTime` (GLSim / local simulator only) and
 `E2E_EVIDENCE=mock` feeds validators a scripted incident feed, which makes the numbers exact
@@ -294,7 +294,7 @@ genlayer deploy --contract contracts/uptime_bond.py --args 100 1000
 
 Non-payable calls look like `genlayer write <address> audit_epoch --args 1 1`
 and reads like `genlayer call <address> get_plan --args 1` (`<address>` is your
-deployed contract, for example `0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6` below). For sending a value
+deployed contract, for example `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7` below). For sending a value
 with payable calls from the CLI, check `genlayer write --help` for your CLI
 version.
 
@@ -302,18 +302,18 @@ version.
 
 | Network | Address |
 |---|---|
-| Studionet | `0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6` |
+| Studionet | `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7` |
 
 Call it from the CLI (after `genlayer network set studionet`):
 
 ```bash
-genlayer call 0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6 get_stats
-genlayer call 0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6 get_plan --args 1
-genlayer write 0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6 audit_epoch --args 1 1
+genlayer call 0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7 get_stats
+genlayer call 0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7 get_plan --args 1
+genlayer write 0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7 audit_epoch --args 1 1
 ```
 
 To run the live end-to-end test against this instance instead of deploying a new
-one, set `E2E_CONTRACT_ADDRESS=0xE938B4c6A38Eb347e100b868fB9F5B4c7679E2D6`. The test expects a fresh contract
+one, set `E2E_CONTRACT_ADDRESS=0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7`. The test expects a fresh contract
 (no plans yet, deployed with `100 1000`) and fails with a clear message otherwise.
 
 ### A short end-to-end demo
