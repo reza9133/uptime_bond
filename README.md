@@ -8,7 +8,9 @@
 > A live end-to-end test for Studionet is in [`tests_e2e/`](#one-command-runs-and-the-live-report).
 > Run everything, with a live report, using `bash scripts/run_all.sh`.
 >
-> Studionet contract address: `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7`
+> Studionet contract address: `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7` — the **Live Verified Instance**: a live, verified
+> Studionet deployment that already has an on-chain audit history (epoch 1 of plan 1 was
+> audited and settled; see [`STUDIONET_RUN.md`](STUDIONET_RUN.md)).
 
 A provider publishes a plan: *"this service is up at least 99.9% of every
 epoch"*, priced per epoch, with a public status page as the source of truth,
@@ -256,7 +258,23 @@ The first time-gated run stops after the setup tests (the audit tests are skippe
 
 `E2E_FINALITY_WAIT_S=<seconds>` (default 900) is how long the last test polls for payouts to finalize. If they have not landed it is *skipped*, never passed; run `E2E_SETTLE=resume` again later. Resuming is safe to repeat: tests 08 and 09 reuse an audit and claims that already happened.
 
-`E2E_CONTRACT_ADDRESS=<address>` attaches to an already deployed (fresh) contract instead of deploying one; the author's Studionet instance is `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7`.
+**Running the end-to-end test**
+
+- **From scratch (recommended).** Run `bash scripts/run_all.sh e2e` *without* setting
+  `E2E_CONTRACT_ADDRESS`. The script deploys a brand-new contract (constructor arguments
+  `100 1000`) and runs the whole scenario against it. With the default `E2E_SETTLE=skip`
+  this covers the setup phase and saves the state; for a single uninterrupted run through
+  settlement use `E2E_SETTLE=wait bash scripts/run_all.sh e2e` (about 3 hours), or finish
+  later with `E2E_SETTLE=resume` as described above.
+- **Verifying the current contract (`0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7`).** Use `E2E_SETTLE=resume bash scripts/run_all.sh e2e`.
+  This mode does not deploy anything and does not read `E2E_CONTRACT_ADDRESS`: it continues the
+  contract recorded in `reports/studionet/e2e_state.json`, i.e. the contract whose setup phase
+  was run on that machine. `reports/` is git-ignored, so the state file only exists where
+  that setup run happened; without it the test stops with a clear message.
+- **`E2E_CONTRACT_ADDRESS=<address>`** attaches to an already deployed *fresh* contract
+  (no plans yet, deployed with `100 1000`) instead of deploying one. Do not point it at the
+  Live Verified Instance `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7`: it already has a plan and a settled epoch, so the
+  "clean initial state" check (`test_02`) fails by design.
 
 `E2E_TIME=warp` jumps the clock with `sim_increaseTime` (GLSim / local simulator only) and
 `E2E_EVIDENCE=mock` feeds validators a scripted incident feed, which makes the numbers exact
@@ -300,21 +318,24 @@ version.
 
 ### Deployed instance
 
-| Network | Address |
-|---|---|
-| Studionet | `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7` |
+| Network | Address | Status |
+|---|---|---|
+| Studionet | `0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7` | **Live Verified Instance**: live, verified, and with an audit history (epoch 1 of plan 1 audited and settled) |
 
-Call it from the CLI (after `genlayer network set studionet`):
+This instance has already been used for a full end-to-end run (plan created, two
+subscribers, epoch 1 audited by the validators and settled), so it is not a blank
+contract. Use it as a read-only example. The read calls below are safe to run as often as
+you like (after `genlayer network set studionet`):
 
 ```bash
 genlayer call 0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7 get_stats
 genlayer call 0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7 get_plan --args 1
-genlayer write 0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7 audit_epoch --args 1 1
+genlayer call 0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7 get_epoch --args 1 1
 ```
 
-To run the live end-to-end test against this instance instead of deploying a new
-one, set `E2E_CONTRACT_ADDRESS=0x5fb0515ff37BAfDd24cEFB0d56F3B1EE997b84b7`. The test expects a fresh contract
-(no plans yet, deployed with `100 1000`) and fails with a clear message otherwise.
+Epoch 1 is already settled, so calling `audit_epoch` for it again is rejected
+(`that epoch is already settled`). To try writes, deploy your own contract
+(see above) and use its address instead.
 
 ### A short end-to-end demo
 
